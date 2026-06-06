@@ -10,12 +10,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 data class AppState(
     val serverHost:      String  = "192.168.1.1",
     val serverPort:      String  = "9876",
     val serverConnected: Boolean = false,
     val bleDevice:       String? = null,
+    val weatherFlow:     WeatherFlowReading? = null,
     val log:             List<String> = emptyList(),
 )
 
@@ -34,6 +37,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         onEvent = { msg ->
             addLog("←BLE $msg")
             tcpClient.send(msg)
+            tryParseWeatherFlow(msg)
         },
     )
 
@@ -92,6 +96,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             is BleCommand.Ping         -> tcpClient.send(buildPong())
             is BleCommand.Unknown      -> addLog("Unknown command: ${cmd.raw}")
         }
+    }
+
+    // ------------------------------------------------------------------
+    // WeatherFlow live parsing
+    // ------------------------------------------------------------------
+
+    private fun tryParseWeatherFlow(msg: String) {
+        try {
+            val obj = BridgeJson.decodeFromString<JsonObject>(msg)
+            if (obj["event"]?.jsonPrimitive?.content != "notification") return
+            val char = obj["char"]?.jsonPrimitive?.content ?: return
+            if (!char.startsWith("961f0005")) return
+            val hex = obj["value"]?.jsonPrimitive?.content ?: return
+            val reading = parseWeatherFlowFrame(hex.hexToBytes()) ?: return
+            _state.update { it.copy(weatherFlow = reading) }
+        } catch (_: Exception) {}
     }
 
     // ------------------------------------------------------------------

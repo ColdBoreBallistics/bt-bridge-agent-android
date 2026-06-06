@@ -17,6 +17,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.coldboreballisticsllc.blebridge.MainViewModel
+import com.coldboreballisticsllc.blebridge.WeatherFlowReading
 
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
@@ -50,6 +51,12 @@ fun MainScreen(viewModel: MainViewModel) {
         )
 
         HorizontalDivider(color = Color(0xFF2A2E30))
+
+        // WeatherFlow live data (visible only when frames are arriving)
+        state.weatherFlow?.let { wf ->
+            WeatherFlowPanel(reading = wf)
+            HorizontalDivider(color = Color(0xFF2A2E30))
+        }
 
         // Server connection controls
         ServerPanel(
@@ -198,6 +205,61 @@ private fun ServerPanel(
             ) {
                 Text(if (connected) "Disconnect" else "Connect")
             }
+        }
+    }
+}
+
+@Composable
+private fun WeatherFlowPanel(reading: WeatherFlowReading) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text  = "WeatherFlow Tactical",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.8f),
+        )
+        Row(
+            modifier              = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            WfTile(label = "Wind",  value = "%.2f".format(reading.windSpeedMph), unit = "mph", modifier = Modifier.weight(1f))
+            WfTile(label = "Dir",   value = "${reading.windDirDeg}",              unit = "°",   modifier = Modifier.weight(1f))
+            WfTile(label = "Temp",  value = "%.1f".format(reading.tempC),         unit = "°C",  modifier = Modifier.weight(1f))
+            WfTile(label = "Hum",   value = "${reading.humidityPct}",             unit = "%",   modifier = Modifier.weight(1f))
+            WfTile(label = "Pres",  value = "%.1f".format(reading.pressureHpa),   unit = "hPa", modifier = Modifier.weight(1.4f))
+        }
+    }
+}
+
+@Composable
+private fun WfTile(label: String, value: String, unit: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        color    = Color(0xFF181C1E),
+        shape    = MaterialTheme.shapes.small,
+    ) {
+        Column(
+            modifier              = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
+            horizontalAlignment   = Alignment.CenterHorizontally,
+            verticalArrangement   = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text  = label,
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+            )
+            Text(
+                text  = value,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize   = 15.sp,
+                ),
+                color = MaterialTheme.colorScheme.secondary,
+            )
+            Text(
+                text  = unit,
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+            )
         }
     }
 }
