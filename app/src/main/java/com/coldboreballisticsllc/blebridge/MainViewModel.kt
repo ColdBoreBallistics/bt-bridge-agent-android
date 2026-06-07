@@ -13,11 +13,19 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
+data class ScanDevice(
+    val address: String,
+    val name:    String?,
+    val rssi:    Int,
+)
+
 data class AppState(
     val serverHost:      String  = "192.168.1.1",
     val serverPort:      String  = "9876",
     val serverConnected: Boolean = false,
     val bleDevice:       String? = null,
+    val isScanning:      Boolean = false,
+    val scanResults:     List<ScanDevice> = emptyList(),
     val weatherFlow:     WeatherFlowReading? = null,
     val log:             List<String> = emptyList(),
 )
@@ -38,6 +46,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             addLog("←BLE $msg")
             tcpClient.send(msg)
             tryParseWeatherFlow(msg)
+            tryParseScanResult(msg)
+            tryParseConnected(msg)
+            tryParseDisconnected(msg)
+            tryParseServicesDiscovered(msg)
         },
     )
 
@@ -77,6 +89,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { tcpClient.disconnect() }
     }
 
+    fun clearLog() = _state.update { it.copy(log = emptyList()) }
+
+    fun startLocalScan() {
+        _state.update { it.copy(isScanning = true, scanResults = emptyList()) }
+        bleManager.startScan(timeoutMs = 15_000, filter = null)
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(15_000)
+            if (_state.value.isScanning) stopLocalScan()
+        }
+    }
+
+    fun stopLocalScan() {
+        bleManager.stopScan()
+        _state.update { it.copy(isScanning = false) }
+    }
+
+    fun connectDevice(device: ScanDevice) {
+        stopLocalScan()
+        _state.update { it.copy(bleDevice = device.address, scanResults = emptyList()) }
+        bleManager.connect(device.address)
+    }
+
     // ------------------------------------------------------------------
     // Command dispatch
     // ------------------------------------------------------------------
@@ -111,6 +145,56 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val hex = obj["value"]?.jsonPrimitive?.content ?: return
             val reading = parseWeatherFlowFrame(hex.hexToBytes()) ?: return
             _state.update { it.copy(weatherFlow = reading) }
+        } catch (_: Exception) {}
+    }
+
+    private fun tryParseScanResult(msg: String) {
+        try {
+            val obj = BridgeJson.decodeFromString<JsonObject>(msg)
+            if (obj["event"]?.jsonPrimitive?.content != "scan_result") return
+            val address = obj["address"]?.jsonPrimitive?.content ?: return
+            val name    = obj["name"]?.jsonPrimitive?.content
+            val rssi    = obj["rssi"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+            val device  = ScanDevice(address, name, rssi)
+            _state.update { s ->
+                val existing = s.scanResults.indexOfFirst { it.address == address }
+                val updated  = if (existing >= 0) s.scanResults.toMutableList().also { it[existing] = device }
+                               else s.scanResults + device
+                s.copy(scanResults = updated.sortedByDescending { it.rssi })
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun tryParseConnected(msg: String) {
+        try {
+            val obj = BridgeJson.decodeFromString<JsonObject>(msg)
+            if (obj["event"]?.jsonPrimitive?.content != "connected") return
+            val address = obj["address"]?.jsonPrimitive?.content ?: return
+            _state.update { it.copy(bleDevice = address) }
+            // Kick off service discovery so we can auto-subscribe to WeatherFlow notify char
+            bleManager.discoverServices(address)
+        } catch (_: Exception) {}
+    }
+
+    private fun tryParseServicesDiscovered(msg: String) {
+        try {
+            val obj = BridgeJson.decodeFromString<JsonObject>(msg)
+            if (obj["event"]?.jsonPrimitive?.content != "services_discovered") return
+            val address = obj["address"]?.jsonPrimitive?.content ?: return
+            // If the WeatherFlow notify char is present, subscribe automatically
+            val services = obj["services"]?.let {
+                BridgeJson.decodeFromString<List<ServiceDescriptor>>(it.toString())
+            } ?: return
+            val hasWf = services.any { svc -> svc.chars.any { ch -> ch.uuid.startsWith("961f0005") } }
+            if (hasWf) bleManager.subscribe(address, WF_NOTIFY_CHAR)
+        } catch (_: Exception) {}
+    }
+
+    private fun tryParseDisconnected(msg: String) {
+        try {
+            val obj = BridgeJson.decodeFromString<JsonObject>(msg)
+            if (obj["event"]?.jsonPrimitive?.content != "disconnected") return
+            _state.update { it.copy(bleDevice = null, weatherFlow = null) }
         } catch (_: Exception) {}
     }
 

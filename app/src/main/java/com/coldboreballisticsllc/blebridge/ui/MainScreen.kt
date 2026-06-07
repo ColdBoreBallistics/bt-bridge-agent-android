@@ -2,6 +2,7 @@
 package com.coldboreballisticsllc.blebridge.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,6 +18,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.coldboreballisticsllc.blebridge.MainViewModel
+import com.coldboreballisticsllc.blebridge.ScanDevice
 import com.coldboreballisticsllc.blebridge.WeatherFlowReading
 
 @Composable
@@ -52,6 +54,18 @@ fun MainScreen(viewModel: MainViewModel) {
 
         HorizontalDivider(color = Color(0xFF2A2E30))
 
+        // BLE scan panel — shown when not connected to a device
+        if (state.bleDevice == null) {
+            ScanPanel(
+                isScanning  = state.isScanning,
+                results     = state.scanResults,
+                onScan      = viewModel::startLocalScan,
+                onStop      = viewModel::stopLocalScan,
+                onConnect   = viewModel::connectDevice,
+            )
+            HorizontalDivider(color = Color(0xFF2A2E30))
+        }
+
         // WeatherFlow live data (visible only when frames are arriving)
         state.weatherFlow?.let { wf ->
             WeatherFlowPanel(reading = wf)
@@ -71,12 +85,28 @@ fun MainScreen(viewModel: MainViewModel) {
 
         HorizontalDivider(color = Color(0xFF2A2E30))
 
-        // Log
-        Text(
-            text  = "Event Log",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-        )
+        // Log header
+        Row(
+            modifier              = Modifier.fillMaxWidth(),
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text  = "Event Log",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+            )
+            TextButton(
+                onClick      = viewModel::clearLog,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            ) {
+                Text(
+                    text  = "Clear",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                )
+            }
+        }
         LazyColumn(
             state    = listState,
             modifier = Modifier
@@ -260,6 +290,101 @@ private fun WfTile(label: String, value: String, unit: String, modifier: Modifie
                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
             )
+        }
+    }
+}
+
+@Composable
+private fun ScanPanel(
+    isScanning: Boolean,
+    results:    List<ScanDevice>,
+    onScan:     () -> Unit,
+    onStop:     () -> Unit,
+    onConnect:  (ScanDevice) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier              = Modifier.fillMaxWidth(),
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text  = "BLE Devices",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+            )
+            Button(
+                onClick = if (isScanning) onStop else onScan,
+                colors  = ButtonDefaults.buttonColors(
+                    containerColor = if (isScanning) Color(0xFF202528) else MaterialTheme.colorScheme.secondary,
+                    contentColor   = if (isScanning) MaterialTheme.colorScheme.onSurface else Color.Black,
+                ),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+            ) {
+                if (isScanning) {
+                    CircularProgressIndicator(
+                        modifier  = Modifier.size(14.dp),
+                        color     = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        strokeWidth = 2.dp,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(if (isScanning) "Stop" else "Scan")
+            }
+        }
+
+        if (results.isEmpty() && !isScanning) {
+            Text(
+                text  = "Tap Scan to discover nearby BLE devices",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
+            )
+        }
+
+        results.forEach { device ->
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onConnect(device) },
+                color  = Color(0xFF181C1E),
+                shape  = MaterialTheme.shapes.small,
+            ) {
+                Row(
+                    modifier              = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment     = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text  = device.name ?: "(unnamed)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (device.name != null)
+                                        MaterialTheme.colorScheme.onSurface
+                                    else
+                                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                        )
+                        Text(
+                            text  = device.address,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize   = 10.sp,
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+                        )
+                    }
+                    Text(
+                        text  = "${device.rssi} dBm",
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                        color = when {
+                            device.rssi >= -60 -> Color(0xFF5A9E6F)
+                            device.rssi >= -75 -> Color(0xFFF0A500)
+                            else               -> Color(0xFFC0554A)
+                        },
+                    )
+                }
+            }
         }
     }
 }
