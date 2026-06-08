@@ -1,10 +1,11 @@
 // Copyright (C) 2026 Jason M. Schwefel. All Rights Reserved.
-package com.coldboreballisticsllc.blebridge
+package com.coldboreballisticsllc.btbridge
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -27,6 +28,8 @@ class TcpClient(private val scope: CoroutineScope) {
     private var socket: Socket?      = null
     private var writer: PrintWriter? = null
     private var readJob: Job?        = null
+    private var writeJob: Job?       = null
+    private val sendChannel          = Channel<String>(capacity = Channel.UNLIMITED)
 
     suspend fun connect(host: String, port: Int) {
         disconnect()
@@ -48,10 +51,17 @@ class TcpClient(private val scope: CoroutineScope) {
                     _connectionState.emit(false)
                 }
             }
+            writeJob = scope.launch(Dispatchers.IO) {
+                for (msg in sendChannel) {
+                    try { writer?.println(msg) } catch (_: Exception) { break }
+                }
+            }
         }
     }
 
     suspend fun disconnect() {
+        writeJob?.cancelAndJoin()
+        writeJob = null
         readJob?.cancelAndJoin()
         readJob = null
         withContext(Dispatchers.IO) {
@@ -64,7 +74,7 @@ class TcpClient(private val scope: CoroutineScope) {
     }
 
     fun send(message: String) {
-        writer?.println(message)
+        sendChannel.trySend(message)
     }
 
     val isConnected: Boolean get() = socket?.isConnected == true && socket?.isClosed == false

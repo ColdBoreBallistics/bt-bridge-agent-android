@@ -1,10 +1,11 @@
 // Copyright (C) 2026 Jason M. Schwefel. All Rights Reserved.
-package com.coldboreballisticsllc.blebridge
+package com.coldboreballisticsllc.btbridge
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,21 +14,27 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
+private const val SCAN_EXPIRY_MS = 15_000L
+private const val SCAN_PRUNE_INTERVAL_MS = 2_000L
+
 data class ScanDevice(
-    val address: String,
-    val name:    String?,
-    val rssi:    Int,
+    val address:    String,
+    val name:       String,
+    val rssi:       Int,
+    val lastSeenMs: Long = System.currentTimeMillis(),
 )
 
 data class AppState(
-    val serverHost:      String  = "192.168.1.1",
-    val serverPort:      String  = "9876",
-    val serverConnected: Boolean = false,
-    val bleDevice:       String? = null,
-    val isScanning:      Boolean = false,
-    val scanResults:     List<ScanDevice> = emptyList(),
-    val weatherFlow:     WeatherFlowReading? = null,
-    val log:             List<String> = emptyList(),
+    val serverHost:       String               = "192.168.1.1",
+    val serverPort:       String               = "9876",
+    val serverConnected:  Boolean              = false,
+    val bleDevice:        String?              = null,
+    val isScanning:       Boolean              = false,
+    val scanResults:      List<ScanDevice>     = emptyList(),
+    val weatherFlow:      WeatherFlowReading?  = null,
+    val log:              List<String>         = emptyList(),
+    val ipHistory:        List<String>         = emptyList(),
+    val pendingQuestions: List<ServerQuestion> = emptyList(),
 )
 
 private const val MAX_LOG = 500
@@ -63,6 +70,43 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             tcpClient.commands.collect { cmd -> handleCommand(cmd) }
         }
+        viewModelScope.launch {
+            val history = Prefs.loadHosts(app)
+            if (history.isNotEmpty()) {
+                _state.update { it.copy(ipHistory = history, serverHost = history.first()) }
+                autoConnect()
+            }
+        }
+        viewModelScope.launch {
+            while (true) {
+                delay(SCAN_PRUNE_INTERVAL_MS)
+                val cutoff = System.currentTimeMillis() - SCAN_EXPIRY_MS
+                _state.update { s ->
+                    val pruned = s.scanResults.filter { it.lastSeenMs >= cutoff }
+                    if (pruned.size == s.scanResults.size) s else s.copy(scanResults = pruned)
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Auto-connect
+    // ------------------------------------------------------------------
+
+    private fun autoConnect() {
+        viewModelScope.launch(Dispatchers.IO) {
+            while (!tcpClient.isConnected) {
+                try {
+                    val host = _state.value.serverHost.trim()
+                    val port = _state.value.serverPort.trim().toIntOrNull() ?: 9876
+                    addLog("Auto-connecting to $host:$port …")
+                    tcpClient.connect(host, port)
+                    return@launch
+                } catch (_: Exception) {
+                    kotlinx.coroutines.delay(3_000)
+                }
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -79,6 +123,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 addLog("Connecting to $host:$port …")
                 tcpClient.connect(host, port)
+                Prefs.saveHost(getApplication(), host)
+                val history = Prefs.loadHosts(getApplication())
+                _state.update { it.copy(ipHistory = history) }
             } catch (e: Exception) {
                 addLog("Connection failed: ${e.message}")
             }
@@ -87,6 +134,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun disconnectServer() {
         viewModelScope.launch { tcpClient.disconnect() }
+    }
+
+    fun updateHostFromHistory(host: String) {
+        _state.update { it.copy(serverHost = host) }
+        if (!tcpClient.isConnected) autoConnect()
+    }
+
+    fun disconnectBle() {
+        val address = _state.value.bleDevice ?: return
+        bleManager.disconnect(address)
     }
 
     fun clearLog() = _state.update { it.copy(log = emptyList()) }
@@ -111,6 +168,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         bleManager.connect(device.address)
     }
 
+    fun answerQuestion(reqId: String, value: Boolean) {
+        tcpClient.send(buildAnswer(reqId, value))
+        _state.update { it.copy(pendingQuestions = it.pendingQuestions.filter { q -> q.reqId != reqId }) }
+    }
+
+    fun dismissQuestion(reqId: String) {
+        tcpClient.send(buildDismiss(reqId))
+        _state.update { it.copy(pendingQuestions = it.pendingQuestions.filter { q -> q.reqId != reqId }) }
+    }
+
     // ------------------------------------------------------------------
     // Command dispatch
     // ------------------------------------------------------------------
@@ -127,6 +194,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             is BleCommand.Unsubscribe  -> bleManager.unsubscribe(cmd.address, cmd.char)
             is BleCommand.Read         -> bleManager.read(cmd.address, cmd.char, cmd.reqId)
             is BleCommand.Write        -> bleManager.write(cmd.address, cmd.char, cmd.value, cmd.rsp, cmd.reqId)
+            is BleCommand.AskQuestion     -> _state.update { it.copy(
+                pendingQuestions = it.pendingQuestions + cmd.question
+            )}
+            is BleCommand.DismissQuestion -> _state.update { it.copy(pendingQuestions = emptyList()) }
             is BleCommand.Ping         -> tcpClient.send(buildPong())
             is BleCommand.Unknown      -> addLog("Unknown command: ${cmd.raw}")
         }
@@ -153,14 +224,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val obj = BridgeJson.decodeFromString<JsonObject>(msg)
             if (obj["event"]?.jsonPrimitive?.content != "scan_result") return
             val address = obj["address"]?.jsonPrimitive?.content ?: return
-            val name    = obj["name"]?.jsonPrimitive?.content
+            val name    = obj["name"]?.jsonPrimitive?.content ?: return
             val rssi    = obj["rssi"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
-            val device  = ScanDevice(address, name, rssi)
+            val device  = ScanDevice(address, name, rssi, System.currentTimeMillis())
             _state.update { s ->
                 val existing = s.scanResults.indexOfFirst { it.address == address }
                 val updated  = if (existing >= 0) s.scanResults.toMutableList().also { it[existing] = device }
                                else s.scanResults + device
-                s.copy(scanResults = updated.sortedByDescending { it.rssi })
+                s.copy(scanResults = updated.sortedBy { it.name.lowercase() })
             }
         } catch (_: Exception) {}
     }

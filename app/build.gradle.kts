@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace   = "com.coldboreballisticsllc.blebridge"
+    namespace   = "com.coldboreballisticsllc.btbridge"
     compileSdk  = 35
 
     defaultConfig {
-        applicationId = "com.coldboreballisticsllc.blebridge"
+        applicationId = "com.coldboreballisticsllc.btbridge"
         minSdk        = 31
         targetSdk     = 35
         versionCode   = 1
@@ -43,6 +43,7 @@ android {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)

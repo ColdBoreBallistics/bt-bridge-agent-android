@@ -1,5 +1,5 @@
 // Copyright (C) 2026 Jason M. Schwefel. All Rights Reserved.
-package com.coldboreballisticsllc.blebridge.ui.theme
+package com.coldboreballisticsllc.btbridge.ui.theme
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -23,7 +23,7 @@ private val DarkColors = darkColorScheme(
 )
 
 @Composable
-fun BleBridgeTheme(content: @Composable () -> Unit) {
+fun BtBridgeTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = DarkColors,
         content     = content,

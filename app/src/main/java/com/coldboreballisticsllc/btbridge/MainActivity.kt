@@ -1,5 +1,5 @@
 // Copyright (C) 2026 Jason M. Schwefel. All Rights Reserved.
-package com.coldboreballisticsllc.blebridge
+package com.coldboreballisticsllc.btbridge
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -10,8 +10,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
-import com.coldboreballisticsllc.blebridge.ui.MainScreen
-import com.coldboreballisticsllc.blebridge.ui.theme.BleBridgeTheme
+import com.coldboreballisticsllc.btbridge.ui.MainScreen
+import com.coldboreballisticsllc.btbridge.ui.theme.BtBridgeTheme
 
 class MainActivity : ComponentActivity() {
 
@@ -26,7 +26,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         requestBlePermissions()
         setContent {
-            BleBridgeTheme {
+            BtBridgeTheme {
                 MainScreen(viewModel = viewModel)
             }
         }

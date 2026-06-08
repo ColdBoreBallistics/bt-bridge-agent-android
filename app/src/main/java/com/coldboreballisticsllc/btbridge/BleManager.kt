@@ -1,5 +1,5 @@
 // Copyright (C) 2026 Jason M. Schwefel. All Rights Reserved.
-package com.coldboreballisticsllc.blebridge
+package com.coldboreballisticsllc.btbridge
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
@@ -79,8 +79,8 @@ class BleManager(
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val address = result.device.address
-            val name    = result.device.name
-            if (nameFilter != null && (name == null || !name.startsWith(nameFilter!!))) return
+            val name    = result.device.name ?: return
+            if (nameFilter != null && !name.startsWith(nameFilter!!)) return
             emit(buildScanResult(address, name, result.rssi))
         }
         override fun onScanFailed(errorCode: Int) {

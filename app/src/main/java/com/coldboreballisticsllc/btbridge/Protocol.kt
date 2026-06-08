@@ -1,5 +1,5 @@
 // Copyright (C) 2026 Jason M. Schwefel. All Rights Reserved.
-package com.coldboreballisticsllc.blebridge
+package com.coldboreballisticsllc.btbridge
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -36,9 +36,16 @@ sealed class BleCommand {
     data class Unsubscribe(val address: String, val char: String) : BleCommand()
     data class Read(val address: String, val char: String, val reqId: String) : BleCommand()
     data class Write(val address: String, val char: String, val value: ByteArray, val rsp: Boolean, val reqId: String) : BleCommand()
+    data class AskQuestion(val question: ServerQuestion) : BleCommand()
+    data object DismissQuestion : BleCommand()
     data object Ping : BleCommand()
     data class Unknown(val raw: String) : BleCommand()
 }
+
+data class ServerQuestion(
+    val reqId:    String,
+    val question: String,
+)
 
 fun parseBleCommand(line: String): BleCommand {
     return try {
@@ -73,6 +80,13 @@ fun parseBleCommand(line: String): BleCommand {
                 reqId   = obj["req_id"]!!.jsonPrimitive.content,
             )
             "ping"        -> BleCommand.Ping
+            "ask"          -> BleCommand.AskQuestion(
+                ServerQuestion(
+                    reqId    = obj["req_id"]!!.jsonPrimitive.content,
+                    question = obj["question"]!!.jsonPrimitive.content,
+                )
+            )
+            "dismiss_all"  -> BleCommand.DismissQuestion
             else          -> BleCommand.Unknown(line)
         }
     } catch (e: Exception) {
@@ -94,8 +108,8 @@ data class ServiceDescriptor(
     val chars: List<CharDescriptor>,
 )
 
-fun buildScanResult(address: String, name: String?, rssi: Int): String =
-    """{"event":"scan_result","address":"$address","name":${if (name != null) "\"$name\"" else "null"},"rssi":$rssi,"ts":${nowMs()}}"""
+fun buildScanResult(address: String, name: String, rssi: Int): String =
+    """{"event":"scan_result","address":"$address","name":"$name","rssi":$rssi,"ts":${nowMs()}}"""
 
 fun buildConnected(address: String): String =
     """{"event":"connected","address":"$address","ts":${nowMs()}}"""
@@ -132,10 +146,15 @@ fun buildPong(): String =
 fun buildLog(level: String, message: String): String =
     """{"event":"log","level":"$level","message":${BridgeJson.encodeToString(kotlinx.serialization.json.JsonPrimitive(message))},"ts":${nowMs()}}"""
 
+fun buildAnswer(reqId: String, value: Boolean): String =
+    """{"event":"answer","req_id":"$reqId","value":$value,"ts":${nowMs()}}"""
+
+fun buildDismiss(reqId: String): String =
+    """{"event":"dismiss","req_id":"$reqId","ts":${nowMs()}}"""
+
 // ── WeatherFlow Tactical live-data parser ─────────────────────────────────────
 // Notify char 961f0005 — 16-byte LE frame, ~1 Hz
 // off0  u16  wind speed raw  (/ 1024 = mph)
-// off2  u8   wind direction  (degrees; compass semantics unverified — DOPE-30)
 // off8  s16  temperature     (× 0.1 °C)
 // off10 u8   humidity        (%)
 // off12 u16  pressure        (× 0.1 hPa)
@@ -143,11 +162,10 @@ fun buildLog(level: String, message: String): String =
 const val WF_NOTIFY_CHAR = "961f0005-d2d6-43e3-a417-3bb8217e0e01"
 
 data class WeatherFlowReading(
-    val windSpeedMph:   Float,
-    val windDirDeg:     Int,
-    val tempC:          Float,
-    val humidityPct:    Int,
-    val pressureHpa:    Float,
+    val windSpeedMph: Float,
+    val tempC:        Float,
+    val humidityPct:  Int,
+    val pressureHpa:  Float,
 )
 
 fun parseWeatherFlowFrame(bytes: ByteArray): WeatherFlowReading? {
@@ -156,10 +174,9 @@ fun parseWeatherFlowFrame(bytes: ByteArray): WeatherFlowReading? {
     fun s16(off: Int) = u16(off).let { if (it >= 0x8000) it - 0x10000 else it }
     fun u8(off: Int)  = bytes[off].toInt() and 0xFF
     return WeatherFlowReading(
-        windSpeedMph  = u16(0) / 1024f,
-        windDirDeg    = u8(2),
-        tempC         = s16(8) * 0.1f,
-        humidityPct   = u8(10),
-        pressureHpa   = u16(12) * 0.1f,
+        windSpeedMph = u16(0) / 1024f,
+        tempC        = s16(8) * 0.1f,
+        humidityPct  = u8(10),
+        pressureHpa  = u16(12) * 0.1f,
     )
 }

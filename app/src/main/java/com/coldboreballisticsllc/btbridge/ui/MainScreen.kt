@@ -1,5 +1,5 @@
 // Copyright (C) 2026 Jason M. Schwefel. All Rights Reserved.
-package com.coldboreballisticsllc.blebridge.ui
+package com.coldboreballisticsllc.btbridge.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -8,6 +8,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,9 +19,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.coldboreballisticsllc.blebridge.MainViewModel
-import com.coldboreballisticsllc.blebridge.ScanDevice
-import com.coldboreballisticsllc.blebridge.WeatherFlowReading
+import com.coldboreballisticsllc.btbridge.MainViewModel
+import com.coldboreballisticsllc.btbridge.ScanDevice
+import com.coldboreballisticsllc.btbridge.ServerQuestion
+import com.coldboreballisticsllc.btbridge.WeatherFlowReading
 
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
@@ -50,6 +53,7 @@ fun MainScreen(viewModel: MainViewModel) {
         StatusRow(
             serverConnected = state.serverConnected,
             bleDevice       = state.bleDevice,
+            onBleDc         = viewModel::disconnectBle,
         )
 
         HorizontalDivider(color = Color(0xFF2A2E30))
@@ -72,15 +76,26 @@ fun MainScreen(viewModel: MainViewModel) {
             HorizontalDivider(color = Color(0xFF2A2E30))
         }
 
+        if (state.pendingQuestions.isNotEmpty()) {
+            QuestionStack(
+                questions = state.pendingQuestions,
+                onAnswer  = viewModel::answerQuestion,
+                onDismiss = viewModel::dismissQuestion,
+            )
+            HorizontalDivider(color = Color(0xFF2A2E30))
+        }
+
         // Server connection controls
         ServerPanel(
-            host      = state.serverHost,
-            port      = state.serverPort,
-            connected = state.serverConnected,
-            onHost    = viewModel::updateHost,
-            onPort    = viewModel::updatePort,
-            onConnect = viewModel::connectServer,
-            onDisconnect = viewModel::disconnectServer,
+            host             = state.serverHost,
+            port             = state.serverPort,
+            connected        = state.serverConnected,
+            history          = state.ipHistory,
+            onHost           = viewModel::updateHost,
+            onPort           = viewModel::updatePort,
+            onSelectHistory  = viewModel::updateHostFromHistory,
+            onConnect        = viewModel::connectServer,
+            onDisconnect     = viewModel::disconnectServer,
         )
 
         HorizontalDivider(color = Color(0xFF2A2E30))
@@ -140,7 +155,11 @@ fun MainScreen(viewModel: MainViewModel) {
 }
 
 @Composable
-private fun StatusRow(serverConnected: Boolean, bleDevice: String?) {
+private fun StatusRow(
+    serverConnected: Boolean,
+    bleDevice:       String?,
+    onBleDc:         () -> Unit,
+) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalAlignment     = Alignment.CenterVertically,
@@ -155,6 +174,18 @@ private fun StatusRow(serverConnected: Boolean, bleDevice: String?) {
             active  = bleDevice != null,
             activeColor = MaterialTheme.colorScheme.secondary,
         )
+        if (bleDevice != null) {
+            TextButton(
+                onClick        = onBleDc,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            ) {
+                Text(
+                    text  = "Disconnect BLE",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFFC0554A),
+                )
+            }
+        }
     }
 }
 
@@ -188,13 +219,15 @@ private fun StatusChip(label: String, active: Boolean, activeColor: Color) {
 
 @Composable
 private fun ServerPanel(
-    host:        String,
-    port:        String,
-    connected:   Boolean,
-    onHost:      (String) -> Unit,
-    onPort:      (String) -> Unit,
-    onConnect:   () -> Unit,
-    onDisconnect: () -> Unit,
+    host:            String,
+    port:            String,
+    connected:       Boolean,
+    history:         List<String>,
+    onHost:          (String) -> Unit,
+    onPort:          (String) -> Unit,
+    onSelectHistory: (String) -> Unit,
+    onConnect:       () -> Unit,
+    onDisconnect:    () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
@@ -206,15 +239,13 @@ private fun ServerPanel(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment     = Alignment.CenterVertically,
         ) {
-            OutlinedTextField(
+            IpHistoryField(
                 value         = host,
-                onValueChange = onHost,
-                label         = { Text("Server IP") },
-                singleLine    = true,
+                history       = history,
                 enabled       = !connected,
+                onValueChange = onHost,
+                onSelect      = onSelectHistory,
                 modifier      = Modifier.weight(1f),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                colors        = serverFieldColors(),
             )
             OutlinedTextField(
                 value         = port,
@@ -239,6 +270,55 @@ private fun ServerPanel(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun IpHistoryField(
+    value:         String,
+    history:       List<String>,
+    enabled:       Boolean,
+    onValueChange: (String) -> Unit,
+    onSelect:      (String) -> Unit,
+    modifier:      Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(
+        expanded         = expanded && history.isNotEmpty() && enabled,
+        onExpandedChange = { if (enabled) expanded = it },
+        modifier         = modifier,
+    ) {
+        OutlinedTextField(
+            value           = value,
+            onValueChange   = onValueChange,
+            label           = { Text("Server IP") },
+            singleLine      = true,
+            enabled         = enabled,
+            trailingIcon    = {
+                if (history.isNotEmpty() && enabled) {
+                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+                }
+            },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+            colors          = serverFieldColors(),
+            modifier        = Modifier
+                .menuAnchor(MenuAnchorType.PrimaryEditable)
+                .fillMaxWidth(),
+        )
+        if (history.isNotEmpty()) {
+            ExposedDropdownMenu(
+                expanded         = expanded,
+                onDismissRequest = { expanded = false },
+            ) {
+                history.forEach { ip ->
+                    DropdownMenuItem(
+                        text    = { Text(ip, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)) },
+                        onClick = { onSelect(ip); expanded = false },
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun WeatherFlowPanel(reading: WeatherFlowReading) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -251,45 +331,140 @@ private fun WeatherFlowPanel(reading: WeatherFlowReading) {
             modifier              = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            WfTile(label = "Wind",  value = "%.2f".format(reading.windSpeedMph), unit = "mph", modifier = Modifier.weight(1f))
-            WfTile(label = "Dir",   value = "${reading.windDirDeg}",              unit = "°",   modifier = Modifier.weight(1f))
-            WfTile(label = "Temp",  value = "%.1f".format(reading.tempC),         unit = "°C",  modifier = Modifier.weight(1f))
-            WfTile(label = "Hum",   value = "${reading.humidityPct}",             unit = "%",   modifier = Modifier.weight(1f))
-            WfTile(label = "Pres",  value = "%.1f".format(reading.pressureHpa),   unit = "hPa", modifier = Modifier.weight(1.4f))
+            WfTile(
+                label    = "Wind Speed",
+                value    = "%.2f".format(reading.windSpeedMph),
+                unit     = "mph",
+                large    = true,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Row(
+            modifier              = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            WfTile(label = "Temp",     value = "%.1f".format(reading.tempC),       unit = "°C",  modifier = Modifier.weight(1f))
+            WfTile(label = "Humidity", value = "${reading.humidityPct}",            unit = "%",   modifier = Modifier.weight(1f))
+            WfTile(label = "Pressure", value = "%.1f".format(reading.pressureHpa), unit = "hPa", modifier = Modifier.weight(1.4f))
         }
     }
 }
 
 @Composable
-private fun WfTile(label: String, value: String, unit: String, modifier: Modifier = Modifier) {
+private fun WfTile(
+    label:    String,
+    value:    String,
+    unit:     String,
+    large:    Boolean  = false,
+    modifier: Modifier = Modifier,
+) {
     Surface(
         modifier = modifier,
         color    = Color(0xFF181C1E),
         shape    = MaterialTheme.shapes.small,
     ) {
         Column(
-            modifier              = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
-            horizontalAlignment   = Alignment.CenterHorizontally,
-            verticalArrangement   = Arrangement.spacedBy(2.dp),
+            modifier            = Modifier.padding(horizontal = 10.dp, vertical = if (large) 12.dp else 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             Text(
                 text  = label,
-                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = if (large) 11.sp else 9.sp),
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
             )
             Text(
                 text  = value,
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontFamily = FontFamily.Monospace,
-                    fontSize   = 15.sp,
+                    fontSize   = if (large) 26.sp else 15.sp,
                 ),
                 color = MaterialTheme.colorScheme.secondary,
             )
             Text(
                 text  = unit,
-                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = if (large) 10.sp else 9.sp),
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
             )
+        }
+    }
+}
+
+@Composable
+private fun QuestionStack(
+    questions: List<ServerQuestion>,
+    onAnswer:  (String, Boolean) -> Unit,
+    onDismiss: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text  = "Questions from Server",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+        )
+        questions.forEach { q ->
+            QuestionCard(question = q, onAnswer = onAnswer, onDismiss = onDismiss)
+        }
+    }
+}
+
+@Composable
+private fun QuestionCard(
+    question:  ServerQuestion,
+    onAnswer:  (String, Boolean) -> Unit,
+    onDismiss: (String) -> Unit,
+) {
+    Surface(
+        color = Color(0xFF181C1E),
+        shape = MaterialTheme.shapes.small,
+    ) {
+        Column(
+            modifier            = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier              = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment     = Alignment.Top,
+            ) {
+                Text(
+                    text     = question.question,
+                    style    = MaterialTheme.typography.bodyMedium,
+                    color    = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(
+                    onClick  = { onDismiss(question.reqId) },
+                    modifier = Modifier.size(20.dp),
+                ) {
+                    Icon(
+                        imageVector        = Icons.Default.Close,
+                        contentDescription = "Dismiss",
+                        tint               = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                        modifier           = Modifier.size(16.dp),
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick  = { onAnswer(question.reqId, true) },
+                    colors   = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF2A5C3A),
+                        contentColor   = Color.White,
+                    ),
+                    modifier = Modifier.weight(1f),
+                ) { Text("Yes") }
+                Button(
+                    onClick  = { onAnswer(question.reqId, false) },
+                    colors   = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF5C2A2A),
+                        contentColor   = Color.White,
+                    ),
+                    modifier = Modifier.weight(1f),
+                ) { Text("No") }
+            }
         }
     }
 }
@@ -358,12 +533,9 @@ private fun ScanPanel(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            text  = device.name ?: "(unnamed)",
+                            text  = device.name,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = if (device.name != null)
-                                        MaterialTheme.colorScheme.onSurface
-                                    else
-                                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                            color = MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
                             text  = device.address,
