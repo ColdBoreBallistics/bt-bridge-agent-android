@@ -8,6 +8,8 @@ activityCompose      = "1.10.1"
 coroutines           = "1.10.2"
 kotlinxSerialization = "1.8.1"
 datastore            = "1.1.4"
+junit                = "4.13.2"
+orgJson              = "20240303"
 
 [libraries]
 androidx-core-ktx              = { group = "androidx.core",      name = "core-ktx",              version.ref = "coreKtx" }
@@ -23,6 +25,8 @@ androidx-compose-material-icons-extended = { group = "androidx.compose.material"
 androidx-compose-ui-tooling     = { group = "androidx.compose.ui", name = "ui-tooling" }
 kotlinx-coroutines-android      = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-serialization-json      = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+junit                           = { group = "junit",                name = "junit",                 version.ref = "junit" }
+org-json                        = { group = "org.json",             name = "json",                  version.ref = "orgJson" }
 
 [plugins]
 android-application  = { id = "com.android.application",             version.ref = "agp" }
