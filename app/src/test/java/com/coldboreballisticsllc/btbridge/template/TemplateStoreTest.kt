@@ -72,4 +72,34 @@ class TemplateStoreTest {
         assertTrue(versions.any { it.id == "builtin.a" && it.version == "1.0.0" })
         assertTrue(versions.any { it.id == "builtin.a" && it.version == "2.0.0" })
     }
+
+    @Test
+    fun save_rejects_path_traversal_id() {
+        val s = store()
+        val evil = JSONObject("""{"schema_version":1,"id":"../../evil","version":"1.0.0","type":"device"}""")
+        s.save(evil)
+        // Not cached, and nothing written outside the store root.
+        assertNull(s.get("../../evil", "1.0.0"))
+        val escaped = File(tmp.root.parentFile, "evil/1.0.0.json")
+        assertFalse("a file escaped the store root: $escaped", escaped.exists())
+    }
+
+    @Test
+    fun save_rejects_bad_version() {
+        val s = store()
+        val bad = JSONObject("""{"schema_version":1,"id":"builtin.ok","version":"../evil","type":"device"}""")
+        s.save(bad)
+        assertNull(s.get("builtin.ok", "../evil"))
+    }
+
+    @Test
+    fun save_accepts_normal_id_and_version() {
+        // Regression: the validation must NOT reject legitimate ids/versions.
+        val s = store()
+        s.save(deviceTemplate("builtin.weatherflow-tactical-display", "1.2.0"))
+        assertNotNull(s.get("builtin.weatherflow-tactical-display", "1.2.0"))
+        // contrib namespace + hyphens + dotted version also fine.
+        s.save(deviceTemplate("contrib.my-device-display", "0.1.0"))
+        assertNotNull(s.get("contrib.my-device-display", "0.1.0"))
+    }
 }

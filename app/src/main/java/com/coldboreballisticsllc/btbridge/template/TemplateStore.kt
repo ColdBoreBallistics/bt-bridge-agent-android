@@ -15,6 +15,13 @@ class TemplateStore(private val root: File) {
 
     data class TemplateRef(val id: String, val version: String)
 
+    companion object {
+        // Template id/version must be safe filesystem-path components — no separators,
+        // no parent-dir escapes. Mirrors the broker's save_draft validation.
+        private val SAFE_ID = Regex("^[a-z0-9]+([._-][a-z0-9]+)*$")
+        private val SAFE_VERSION = Regex("^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    }
+
     private val cache = mutableMapOf<Pair<String, String>, JSONObject>()
 
     init {
@@ -32,7 +39,11 @@ class TemplateStore(private val root: File) {
         val tid = template.optString("id")
         val ver = template.optString("version")
         if (tid.isEmpty() || ver.isEmpty()) return
+        // Reject ids/versions that aren't safe path components (path-traversal defense).
+        if (!SAFE_ID.matches(tid) || !SAFE_VERSION.matches(ver)) return
         val file = fileFor(tid, ver)
+        // Defense in depth: the resolved file must stay within the store root.
+        if (!file.canonicalPath.startsWith(root.canonicalPath + File.separator)) return
         file.parentFile?.mkdirs()
         file.writeText(template.toString(2))
         cache[tid to ver] = template
@@ -60,7 +71,8 @@ class TemplateStore(private val root: File) {
                     val obj = JSONObject(file.readText())
                     val tid = obj.optString("id")
                     val ver = obj.optString("version")
-                    if (tid.isNotEmpty() && ver.isNotEmpty()) {
+                    if (tid.isNotEmpty() && ver.isNotEmpty()
+                        && SAFE_ID.matches(tid) && SAFE_VERSION.matches(ver)) {
                         cache[tid to ver] = obj
                     }
                 } catch (_: Exception) {}
