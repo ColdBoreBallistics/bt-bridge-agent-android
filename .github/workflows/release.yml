@@ -27,13 +27,20 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      # Validate the wrapper JAR explicitly, allow-listing this repo's verified
+      # Gradle 8.13 wrapper sha (byte-identical across the ScopeDOPE app repos;
+      # the action's built-in allowlist doesn't yet include this 8.13 wrapper).
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+        with:
+          allow-checksums: 591253e94d06160a931907cfb5e90338b166b6232062998020b0bec0fa8e69fb
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          # Keep wrapper-JAR validation ON, but allow the verified Gradle 8.13
-          # wrapper sha used by this repo (and the ScopeDOPE app repos). The
-          # gradle/actions allowlist doesn't yet include this 8.13 wrapper.
-          allow-checksums: 591253e94d06160a931907cfb5e90338b166b6232062998020b0bec0fa8e69fb
+          # Wrapper validation is handled by the explicit step above (which
+          # allow-lists our verified checksum); don't re-run it here.
+          validate-wrappers: false
 
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug
