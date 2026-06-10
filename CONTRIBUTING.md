@@ -104,7 +104,14 @@ Device/display/codec/component **templates** live in
 agent receives templates from the broker at runtime and renders with them. To contribute a
 *template* (no coding required), see that repo's `CONTRIBUTING.md`.
 
-## 8. Code of Conduct & licensing
+## 8. Versioning & releases
+
+This project follows [Semantic Versioning](https://semver.org/); see [`docs/VERSIONING.md`](docs/VERSIONING.md)
+for the bump rules, tag format (`v<version>`), and release flow. User-facing changes go in
+[`CHANGELOG.md`](CHANGELOG.md) (Keep a Changelog format) under `Unreleased`. To report a security
+issue, see [`SECURITY.md`](SECURITY.md) — do not open a public issue.
+
+## 9. Code of Conduct & licensing
 
 By contributing you agree your contribution is licensed under [Apache-2.0](LICENSE) and that you
 will abide by our [Code of Conduct](CODE_OF_CONDUCT.md).
