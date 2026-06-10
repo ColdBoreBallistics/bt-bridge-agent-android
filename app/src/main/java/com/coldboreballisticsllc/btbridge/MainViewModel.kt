@@ -54,7 +54,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val tcpClient = TcpClient(viewModelScope)
 
     private val templateStore = TemplateStore(app)
-    private var activeRenderer: com.coldboreballisticsllc.btbridge.template.TemplateRenderer? = null
+    @Volatile private var activeRenderer: com.coldboreballisticsllc.btbridge.template.TemplateRenderer? = null
     private val activeViewPerDevice = mutableMapOf<String, String>()
 
     private val bleManager = BleManager(
@@ -258,11 +258,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         // Resolve the referenced display template (device template references a display).
+        // Spec'd field is references.display (catalog builtins use it); display_template is
+        // a legacy fallback. Primary first, then fallback.
         val displayRef = deviceTemplate.optJSONObject("references")?.optString("display")
             ?: deviceTemplate.optString("display_template").takeIf { it.isNotEmpty() }
         val displayTemplate = displayRef?.let { ref ->
             val (id, ver) = parseTemplateRef(ref)
             // Resolve version: exact if given, else the highest local version of that id.
+            // NOTE: lexicographic version selection — correct for single-version builtins.
+            // The broker does authoritative semver resolution; revisit if multi-version
+            // display templates ship (e.g. "1.10.0" vs "1.9.0" would mis-order here).
             val resolvedVer = ver ?: templateStore.localVersions()
                 .filter { it.id == id }
                 .maxByOrNull { it.version }?.version
@@ -331,14 +336,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val hex = obj["value"]?.jsonPrimitive?.content ?: return
             val bytes = hex.hexToBytes()
             val address = obj["address"]?.jsonPrimitive?.content ?: ""
-            val view = activeViewPerDevice[address] ?: _state.value.activeView
-            val frame = if (_state.value.gattAnalyserMode || activeRenderer == null) {
-                com.coldboreballisticsllc.btbridge.template.GattAnalyser.render(char, bytes)
-            } else {
-                activeRenderer!!.render(char, bytes, view)
-                    ?: com.coldboreballisticsllc.btbridge.template.GattAnalyser.render(char, bytes)
+            // Render + shared-state access on Main to avoid racing the command handlers
+            // (this method is invoked on the BLE callback thread).
+            viewModelScope.launch {
+                val view = activeViewPerDevice[address] ?: _state.value.activeView
+                val renderer = activeRenderer
+                val frame = if (_state.value.gattAnalyserMode || renderer == null) {
+                    com.coldboreballisticsllc.btbridge.template.GattAnalyser.render(char, bytes)
+                } else {
+                    renderer.render(char, bytes, view)
+                        ?: com.coldboreballisticsllc.btbridge.template.GattAnalyser.render(char, bytes)
+                }
+                _state.update { it.copy(renderedFrame = frame) }
             }
-            _state.update { it.copy(renderedFrame = frame) }
         } catch (_: Exception) {}
     }
 
@@ -388,7 +398,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         try {
             val obj = BridgeJson.decodeFromString<JsonObject>(msg)
             if (obj["event"]?.jsonPrimitive?.content != "disconnected") return
-            _state.update { it.copy(bleDevice = null, renderedFrame = null, gattAnalyserMode = false) }
+            // Clear renderer + per-device view state so a subsequent (possibly untemplated)
+            // device cannot render through the previous device's stale template. Single-device
+            // agent (one bleDevice in AppState), so clearing the whole map is correct.
+            activeRenderer = null
+            activeViewPerDevice.clear()
+            _state.update { it.copy(
+                bleDevice = null,
+                renderedFrame = null,
+                gattAnalyserMode = false,
+                activeView = "raw",
+                availableViews = listOf("raw"),
+                templateWarnings = emptyList(),
+            ) }
         } catch (_: Exception) {}
     }
 
