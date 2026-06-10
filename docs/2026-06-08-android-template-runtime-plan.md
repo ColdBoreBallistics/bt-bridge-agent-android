@@ -457,7 +457,9 @@ class TemplateRenderer(private val template: JSONObject) {
         val notifications = template.optJSONArray("notifications") ?: return null
         for (i in 0 until notifications.length()) {
             val notif = notifications.getJSONObject(i)
-            if (!charUuid.startsWith(notif.optString("char"), ignoreCase = true)) continue
+            val notifChar = notif.optString("char")
+            if (notifChar.isEmpty()) continue
+            if (!charUuid.startsWith(notifChar, ignoreCase = true)) continue
             // Check match block if present
             val match = notif.optJSONObject("match")
             if (match != null && !matchesFrame(bytes, match)) continue
@@ -488,8 +490,13 @@ class TemplateRenderer(private val template: JSONObject) {
         val fieldsArray = viewDef.optJSONArray("fields") ?: JSONArray()
         val warnings = mutableListOf<FieldWarning>()
 
-        // First pass: parse all fields (including display=false for expr inputs)
+        // First pass: parse all fields (including display=false for expr inputs).
+        // parsedValues holds the raw extracted numeric value (used by raw/bitmask/enum).
+        // exprValues holds the semantic value that expr/formula inputs consume — for a
+        // scale_offset field that is raw * scale + offset_value, so downstream expressions
+        // operate on real-world units (e.g. temp_c in °C) rather than the raw register.
         val parsedValues = mutableMapOf<String, Double>()
+        val exprValues = mutableMapOf<String, Double>()
         for (i in 0 until fieldsArray.length()) {
             val fieldDef = fieldsArray.getJSONObject(i)
             val fid = fieldDef.optString("id", "field_$i")
@@ -498,6 +505,11 @@ class TemplateRenderer(private val template: JSONObject) {
             try {
                 val raw = extractRaw(bytes, fieldDef)
                 parsedValues[fid] = raw
+                exprValues[fid] = if (ftype == "scale_offset") {
+                    raw * fieldDef.optDouble("scale", 1.0) + fieldDef.optDouble("offset_value", 0.0)
+                } else {
+                    raw
+                }
             } catch (e: Exception) {
                 warnings.add(FieldWarning(fid, "parse error: ${e.message}"))
             }
@@ -541,7 +553,7 @@ class TemplateRenderer(private val template: JSONObject) {
                     }
                     "expr" -> {
                         val expr = fieldDef.optString("expr", "0")
-                        val result = evalExpr(expr, parsedValues)
+                        val result = evalExpr(expr, exprValues)
                         formatDouble(result, precision)
                     }
                     "formula" -> {
@@ -550,7 +562,7 @@ class TemplateRenderer(private val template: JSONObject) {
                         val resolvedInputs = mutableMapOf<String, Double>()
                         inputs?.keys()?.forEach { key ->
                             val srcId = inputs.optString(key)
-                            resolvedInputs[key] = parsedValues[srcId] ?: 0.0
+                            resolvedInputs[key] = exprValues[srcId] ?: 0.0
                         }
                         val result = evalBuiltinFormula(formulaName, resolvedInputs)
                             ?: run {
@@ -586,7 +598,13 @@ class TemplateRenderer(private val template: JSONObject) {
         val offset = fieldDef.optInt("offset", 0)
         val length = fieldDef.optInt("length", 1)
         val encoding = fieldDef.optString("encoding", "uint8")
-        if (offset + length > bytes.size) return 0.0
+        val width = when (encoding) {
+            "uint8", "int8" -> 1
+            "uint16_be", "uint16_le", "int16_be", "int16_le" -> 2
+            "uint32_be", "uint32_le", "int32_be", "int32_le", "float32_be", "float32_le" -> 4
+            else -> length  // bytes / utf8 / unknown — use declared length
+        }
+        if (offset < 0 || offset + width > bytes.size) return 0.0
         return when (encoding) {
             "uint8"      -> (bytes[offset].toInt() and 0xFF).toDouble()
             "int8"       -> bytes[offset].toDouble()
@@ -665,7 +683,7 @@ class TemplateRenderer(private val template: JSONObject) {
     }
 
     private fun formatDouble(value: Double, precision: Int): String {
-        return "%.${precision}f".format(value)
+        return String.format(java.util.Locale.US, "%.${precision}f", value)
     }
 
     /**

@@ -21,7 +21,9 @@ class TemplateRenderer(private val template: JSONObject) {
         val notifications = template.optJSONArray("notifications") ?: return null
         for (i in 0 until notifications.length()) {
             val notif = notifications.getJSONObject(i)
-            if (!charUuid.startsWith(notif.optString("char"), ignoreCase = true)) continue
+            val notifChar = notif.optString("char")
+            if (notifChar.isEmpty()) continue
+            if (!charUuid.startsWith(notifChar, ignoreCase = true)) continue
             // Check match block if present
             val match = notif.optJSONObject("match")
             if (match != null && !matchesFrame(bytes, match)) continue
@@ -160,7 +162,13 @@ class TemplateRenderer(private val template: JSONObject) {
         val offset = fieldDef.optInt("offset", 0)
         val length = fieldDef.optInt("length", 1)
         val encoding = fieldDef.optString("encoding", "uint8")
-        if (offset + length > bytes.size) return 0.0
+        val width = when (encoding) {
+            "uint8", "int8" -> 1
+            "uint16_be", "uint16_le", "int16_be", "int16_le" -> 2
+            "uint32_be", "uint32_le", "int32_be", "int32_le", "float32_be", "float32_le" -> 4
+            else -> length  // bytes / utf8 / unknown — use declared length
+        }
+        if (offset < 0 || offset + width > bytes.size) return 0.0
         return when (encoding) {
             "uint8"      -> (bytes[offset].toInt() and 0xFF).toDouble()
             "int8"       -> bytes[offset].toDouble()
@@ -239,7 +247,7 @@ class TemplateRenderer(private val template: JSONObject) {
     }
 
     private fun formatDouble(value: Double, precision: Int): String {
-        return "%.${precision}f".format(value)
+        return String.format(java.util.Locale.US, "%.${precision}f", value)
     }
 
     /**

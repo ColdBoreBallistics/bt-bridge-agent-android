@@ -160,4 +160,54 @@ class TemplateRendererTest {
         assertEquals("68.0", tempF.value)
         assertEquals("°F", tempF.unit)
     }
+
+    @Test
+    fun scale_offset_formats_with_us_locale_regardless_of_default() {
+        val prev = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale.GERMANY)
+            val template = makeDisplayTemplate(
+                viewName = "metric",
+                fieldsJson = """[
+                  {"id":"wind","label":"Wind","type":"scale_offset","offset":0,"length":2,
+                   "encoding":"uint16_be","scale":0.001,"offset_value":0.0,"unit":"m/s",
+                   "precision":2,"display":true}
+                ]"""
+            )
+            val renderer = TemplateRenderer(template)
+            val bytes = byteArrayOf(0x03, 0xE8.toByte())  // 1000 * 0.001 = 1.00
+            val frame = renderer.render("0000ff01-0000-1000-8000-00805f9b34fb", bytes, view = "metric")
+            // Must be "1.00" with a DOT, not "1,00", even under Locale.GERMANY.
+            assertEquals("1.00", frame!!.fields[0].value)
+        } finally {
+            java.util.Locale.setDefault(prev)
+        }
+    }
+
+    @Test
+    fun short_frame_for_wide_encoding_does_not_crash() {
+        // uint16_be field but only 1 byte available — must degrade, not throw.
+        val template = makeDisplayTemplate(fieldsJson = """[
+          {"id":"w","label":"W","type":"scale_offset","offset":0,"length":2,
+           "encoding":"uint16_be","scale":1.0,"offset_value":0.0,"unit":"","precision":0,"display":true}
+        ]""")
+        val renderer = TemplateRenderer(template)
+        val frame = renderer.render("0000ff01-0000-1000-8000-00805f9b34fb", byteArrayOf(0x05), view = "raw")
+        assertNotNull(frame)  // did not crash; field degrades to 0
+        assertEquals("0", frame!!.fields.first { it.id == "w" }.value)
+    }
+
+    @Test
+    fun empty_char_in_template_does_not_match() {
+        val template = JSONObject("""
+        {
+          "schema_version": 1, "id": "test.display", "version": "1.0.0", "type": "display",
+          "default_view": "raw",
+          "notifications": [{ "char": "", "views": { "raw": { "fields": [] } } }]
+        }
+        """)
+        val renderer = TemplateRenderer(template)
+        val frame = renderer.render("0000ff01-0000-1000-8000-00805f9b34fb", byteArrayOf(0x01), view = "raw")
+        assertNull(frame)  // empty char must not match
+    }
 }
