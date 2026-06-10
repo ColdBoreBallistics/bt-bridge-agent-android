@@ -25,7 +25,7 @@ jobs:
           java-version: "17"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       # Validate the wrapper JAR explicitly, allow-listing this repo's verified
       # Gradle 8.13 wrapper sha (byte-identical across the ScopeDOPE app repos;
