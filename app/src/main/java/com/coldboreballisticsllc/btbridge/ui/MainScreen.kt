@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import com.coldboreballisticsllc.btbridge.MainViewModel
 import com.coldboreballisticsllc.btbridge.ScanDevice
 import com.coldboreballisticsllc.btbridge.ServerQuestion
+import com.coldboreballisticsllc.btbridge.template.RenderedFrame
 
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
@@ -65,6 +66,21 @@ fun MainScreen(viewModel: MainViewModel) {
                 onScan      = viewModel::startLocalScan,
                 onStop      = viewModel::stopLocalScan,
                 onConnect   = viewModel::connectDevice,
+            )
+            HorizontalDivider(color = Color(0xFF2A2E30))
+        }
+
+        // Template display — shown when connected to a device
+        if (state.bleDevice != null) {
+            TemplateDisplayPanel(
+                renderedFrame    = state.renderedFrame,
+                gattAnalyserMode = state.gattAnalyserMode,
+                activeView       = state.activeView,
+                availableViews   = state.availableViews,
+                templateWarnings = state.templateWarnings,
+                onViewSelected   = { view ->
+                    state.bleDevice?.let { addr -> viewModel.selectView(addr, view) }
+                },
             )
             HorizontalDivider(color = Color(0xFF2A2E30))
         }
@@ -479,6 +495,91 @@ private fun ScanPanel(
                     )
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TemplateDisplayPanel(
+    renderedFrame:    RenderedFrame?,
+    gattAnalyserMode: Boolean,
+    activeView:       String,
+    availableViews:   List<String>,
+    templateWarnings: List<String>,
+    onViewSelected:   (String) -> Unit,
+    modifier:         Modifier = Modifier,
+) {
+    Column(
+        modifier            = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text  = "Device Display",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+        )
+
+        // Warning banners
+        templateWarnings.forEach { warning ->
+            Surface(
+                color = Color(0xFF3A2E00),
+                shape = MaterialTheme.shapes.small,
+            ) {
+                Text(
+                    text     = "⚠ $warning",
+                    color    = Color(0xFFFFCC00),
+                    style    = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
+        }
+
+        // View selector — only when more than one view is available
+        if (availableViews.size > 1) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                availableViews.forEach { view ->
+                    FilterChip(
+                        selected = view == activeView,
+                        onClick  = { onViewSelected(view) },
+                        label    = { Text(view, style = MaterialTheme.typography.labelSmall) },
+                    )
+                }
+            }
+        }
+
+        // Rendered fields
+        if (renderedFrame != null) {
+            renderedFrame.fields.filter { it.display }.forEach { field ->
+                Row(
+                    modifier              = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text  = field.label,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    )
+                    Text(
+                        text  = if (field.unit.isNotEmpty()) "${field.value} ${field.unit}" else field.value,
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+            renderedFrame.warnings.forEach { w ->
+                Text(
+                    text  = "⚠ ${w.fieldId}: ${w.message}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFFFFCC00),
+                )
+            }
+        } else if (gattAnalyserMode || templateWarnings.isEmpty()) {
+            Text(
+                text  = if (gattAnalyserMode) "GATT Analyser — no template" else "Waiting for BLE data…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+            )
         }
     }
 }
