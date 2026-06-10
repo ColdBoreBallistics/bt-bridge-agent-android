@@ -5,6 +5,9 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 // ── Serialization config ──────────────────────────────────────────────────────
@@ -26,6 +29,8 @@ fun nowMs(): Long = System.currentTimeMillis()
 
 // ── Inbound commands (Server → Mobile) ───────────────────────────────────────
 
+data class TemplateManifestEntry(val id: String, val version: String)
+
 sealed class BleCommand {
     data class ScanStart(val timeoutMs: Int = 10_000, val nameFilter: String? = null) : BleCommand()
     data object ScanStop : BleCommand()
@@ -39,6 +44,10 @@ sealed class BleCommand {
     data class AskQuestion(val question: ServerQuestion) : BleCommand()
     data object DismissQuestion : BleCommand()
     data object Ping : BleCommand()
+    data class PushTemplates(val manifest: List<TemplateManifestEntry>) : BleCommand()
+    data class TemplateData(val id: String, val version: String, val content: String) : BleCommand()
+    data class ApplyTemplate(val address: String, val deviceTemplateId: String, val version: String, val variantId: String?) : BleCommand()
+    data class SetView(val address: String, val view: String) : BleCommand()
     data class Unknown(val raw: String) : BleCommand()
 }
 
@@ -87,6 +96,37 @@ fun parseBleCommand(line: String): BleCommand {
                 )
             )
             "dismiss_all"  -> BleCommand.DismissQuestion
+            "push_templates" -> {
+                val entries = buildList {
+                    obj["manifest"]?.jsonArray?.forEach { el ->
+                        val o = el.jsonObject
+                        add(TemplateManifestEntry(
+                            id      = o["id"]?.jsonPrimitive?.content ?: "",
+                            version = o["version"]?.jsonPrimitive?.content ?: "",
+                        ))
+                    }
+                }
+                BleCommand.PushTemplates(entries)
+            }
+            "template_data" -> BleCommand.TemplateData(
+                id      = obj["id"]?.jsonPrimitive?.content ?: "",
+                version = obj["version"]?.jsonPrimitive?.content ?: "",
+                // Broker sends `content` as a JSON object (full template); the agent needs it
+                // as a string to store/parse downstream with org.json. Serialize it back.
+                content = obj["content"]?.jsonObject?.toString()
+                    ?: obj["content"]?.jsonPrimitive?.contentOrNull
+                    ?: "",
+            )
+            "apply_template" -> BleCommand.ApplyTemplate(
+                address          = obj["address"]?.jsonPrimitive?.content ?: "",
+                deviceTemplateId = obj["device_template_id"]?.jsonPrimitive?.content ?: "",
+                version          = obj["version"]?.jsonPrimitive?.content ?: "",
+                variantId        = obj["variant_id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() },
+            )
+            "set_view" -> BleCommand.SetView(
+                address = obj["address"]?.jsonPrimitive?.content ?: "",
+                view    = obj["view"]?.jsonPrimitive?.content ?: "",
+            )
             else          -> BleCommand.Unknown(line)
         }
     } catch (e: Exception) {
@@ -151,6 +191,26 @@ fun buildAnswer(reqId: String, value: Boolean): String =
 
 fun buildDismiss(reqId: String): String =
     """{"event":"dismiss","req_id":"$reqId","ts":${nowMs()}}"""
+
+// ── Template-protocol events (Mobile → Server) ───────────────────────────────
+
+fun buildTemplateRequest(ids: List<TemplateManifestEntry>): String {
+    val idsJson = ids.joinToString(",") { """{"id":"${it.id}","version":"${it.version}"}""" }
+    return """{"event":"template_request","ids":[$idsJson],"ts":${nowMs()}}"""
+}
+
+fun buildTemplateApplied(address: String, deviceTemplateId: String, version: String, variantId: String?): String {
+    val variantPart = if (variantId != null) ""","variant_id":"$variantId"""" else ""","variant_id":null"""
+    return """{"event":"template_applied","address":"$address","device_template_id":"$deviceTemplateId","version":"$version"$variantPart,"ts":${nowMs()}}"""
+}
+
+fun buildViewChanged(address: String, view: String): String =
+    """{"event":"view_changed","address":"$address","view":"$view","ts":${nowMs()}}"""
+
+fun buildHello(platform: String, capabilities: List<String>, bleEnabled: Boolean): String {
+    val caps = capabilities.joinToString(",") { "\"$it\"" }
+    return """{"event":"hello","platform":"$platform","capabilities":[$caps],"ble_enabled":$bleEnabled,"ts":${nowMs()}}"""
+}
 
 // ── WeatherFlow Tactical live-data parser ─────────────────────────────────────
 // Notify char 961f0005 — 16-byte LE frame, ~1 Hz

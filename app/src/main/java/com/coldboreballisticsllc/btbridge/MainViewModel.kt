@@ -199,6 +199,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             )}
             is BleCommand.DismissQuestion -> _state.update { it.copy(pendingQuestions = emptyList()) }
             is BleCommand.Ping         -> tcpClient.send(buildPong())
+            // Template-protocol commands are wired up in Task 6; no-op for now.
+            is BleCommand.PushTemplates -> addLog("push_templates (${cmd.manifest.size}) — not yet handled")
+            is BleCommand.TemplateData  -> addLog("template_data ${cmd.id}@${cmd.version} — not yet handled")
+            is BleCommand.ApplyTemplate -> addLog("apply_template ${cmd.deviceTemplateId}@${cmd.version} — not yet handled")
+            is BleCommand.SetView       -> addLog("set_view ${cmd.view} — not yet handled")
             is BleCommand.Unknown      -> addLog("Unknown command: ${cmd.raw}")
         }
     }
