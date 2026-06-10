@@ -12,7 +12,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
+import com.coldboreballisticsllc.btbridge.template.RenderedFrame
+import com.coldboreballisticsllc.btbridge.template.TemplateStore
 
 private const val SCAN_EXPIRY_MS = 15_000L
 private const val SCAN_PRUNE_INTERVAL_MS = 2_000L
@@ -26,12 +29,16 @@ data class ScanDevice(
 
 data class AppState(
     val serverHost:       String               = "192.168.1.1",
-    val serverPort:       String               = "9876",
+    val serverPort:       String               = "2653",
     val serverConnected:  Boolean              = false,
     val bleDevice:        String?              = null,
     val isScanning:       Boolean              = false,
     val scanResults:      List<ScanDevice>     = emptyList(),
-    val weatherFlow:      WeatherFlowReading?  = null,
+    val renderedFrame:    RenderedFrame?       = null,
+    val gattAnalyserMode: Boolean              = false,
+    val activeView:       String               = "raw",
+    val availableViews:   List<String>         = listOf("raw"),
+    val templateWarnings: List<String>         = emptyList(),
     val log:              List<String>         = emptyList(),
     val ipHistory:        List<String>         = emptyList(),
     val pendingQuestions: List<ServerQuestion> = emptyList(),
@@ -46,13 +53,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val tcpClient = TcpClient(viewModelScope)
 
+    private val templateStore = TemplateStore(app)
+    private var activeRenderer: com.coldboreballisticsllc.btbridge.template.TemplateRenderer? = null
+    private val activeViewPerDevice = mutableMapOf<String, String>()
+
     private val bleManager = BleManager(
         context = app,
         scope   = viewModelScope,
         onEvent = { msg ->
             addLog("←BLE $msg")
-            tcpClient.send(msg)
-            tryParseWeatherFlow(msg)
+            forwardToServer(msg)
+            tryParseNotification(msg)
             tryParseScanResult(msg)
             tryParseConnected(msg)
             tryParseDisconnected(msg)
@@ -65,6 +76,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             tcpClient.connectionState.collect { connected ->
                 _state.update { it.copy(serverConnected = connected) }
                 addLog(if (connected) "TCP connected to server" else "TCP disconnected")
+                if (connected) {
+                    tcpClient.send(buildHello(
+                        platform = "android",
+                        capabilities = listOf("push_templates", "apply_template", "set_view"),
+                        bleEnabled = true,
+                    ))
+                }
             }
         }
         viewModelScope.launch {
@@ -98,7 +116,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             while (!tcpClient.isConnected) {
                 try {
                     val host = _state.value.serverHost.trim()
-                    val port = _state.value.serverPort.trim().toIntOrNull() ?: 9876
+                    val port = _state.value.serverPort.trim().toIntOrNull() ?: 2653
                     addLog("Auto-connecting to $host:$port …")
                     tcpClient.connect(host, port)
                     return@launch
@@ -118,7 +136,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun connectServer() {
         val host = _state.value.serverHost.trim()
-        val port = _state.value.serverPort.trim().toIntOrNull() ?: 9876
+        val port = _state.value.serverPort.trim().toIntOrNull() ?: 2653
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 addLog("Connecting to $host:$port …")
@@ -199,28 +217,128 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             )}
             is BleCommand.DismissQuestion -> _state.update { it.copy(pendingQuestions = emptyList()) }
             is BleCommand.Ping         -> tcpClient.send(buildPong())
-            // Template-protocol commands are wired up in Task 6; no-op for now.
-            is BleCommand.PushTemplates -> addLog("push_templates (${cmd.manifest.size}) — not yet handled")
-            is BleCommand.TemplateData  -> addLog("template_data ${cmd.id}@${cmd.version} — not yet handled")
-            is BleCommand.ApplyTemplate -> addLog("apply_template ${cmd.deviceTemplateId}@${cmd.version} — not yet handled")
-            is BleCommand.SetView       -> addLog("set_view ${cmd.view} — not yet handled")
+            is BleCommand.PushTemplates -> handlePushTemplates(cmd)
+            is BleCommand.TemplateData  -> handleTemplateData(cmd)
+            is BleCommand.ApplyTemplate -> handleApplyTemplate(cmd)
+            is BleCommand.SetView       -> handleSetView(cmd)
             is BleCommand.Unknown      -> addLog("Unknown command: ${cmd.raw}")
         }
     }
 
     // ------------------------------------------------------------------
-    // WeatherFlow live parsing
+    // Template-protocol handlers
     // ------------------------------------------------------------------
 
-    private fun tryParseWeatherFlow(msg: String) {
+    private fun handlePushTemplates(cmd: BleCommand.PushTemplates) {
+        // Request any template we don't already have cached (by id+version).
+        val local = templateStore.localVersions().map { it.id to it.version }.toSet()
+        val toRequest = cmd.manifest.filter { (it.id to it.version) !in local }
+        if (toRequest.isNotEmpty()) {
+            tcpClient.send(buildTemplateRequest(toRequest))
+            addLog("→SRV template_request: ${toRequest.size} template(s)")
+        }
+    }
+
+    private fun handleTemplateData(cmd: BleCommand.TemplateData) {
+        try {
+            val obj = org.json.JSONObject(cmd.content)
+            templateStore.save(obj)
+            addLog("←SRV template_data ${cmd.id}@${cmd.version} saved")
+        } catch (e: Exception) {
+            addLog("template_data parse error: ${e.message}")
+        }
+    }
+
+    private fun handleApplyTemplate(cmd: BleCommand.ApplyTemplate) {
+        val deviceTemplate = templateStore.get(cmd.deviceTemplateId, cmd.version)
+        if (deviceTemplate == null) {
+            addLog("apply_template: ${cmd.deviceTemplateId}@${cmd.version} not cached — GATT analyser")
+            _state.update { it.copy(gattAnalyserMode = true,
+                templateWarnings = listOf("No device template — showing raw GATT data")) }
+            return
+        }
+        // Resolve the referenced display template (device template references a display).
+        val displayRef = deviceTemplate.optJSONObject("references")?.optString("display")
+            ?: deviceTemplate.optString("display_template").takeIf { it.isNotEmpty() }
+        val displayTemplate = displayRef?.let { ref ->
+            val (id, ver) = parseTemplateRef(ref)
+            // Resolve version: exact if given, else the highest local version of that id.
+            val resolvedVer = ver ?: templateStore.localVersions()
+                .filter { it.id == id }
+                .maxByOrNull { it.version }?.version
+            if (resolvedVer != null) templateStore.get(id, resolvedVer) else null
+        }
+        if (displayTemplate == null) {
+            addLog("apply_template: display template not found for ${cmd.deviceTemplateId} — GATT analyser")
+            _state.update { it.copy(gattAnalyserMode = true,
+                templateWarnings = listOf("No display template — showing raw GATT data")) }
+            return
+        }
+        activeRenderer = com.coldboreballisticsllc.btbridge.template.TemplateRenderer(displayTemplate)
+        val defaultView = displayTemplate.optString("default_view", "raw")
+        val views = extractViews(displayTemplate)
+        val device = cmd.address
+        val view = activeViewPerDevice[device] ?: defaultView
+        activeViewPerDevice[device] = view
+        _state.update { it.copy(
+            gattAnalyserMode = false,
+            activeView = view,
+            availableViews = views,
+            templateWarnings = emptyList(),
+        )}
+        tcpClient.send(buildTemplateApplied(cmd.address, cmd.deviceTemplateId, cmd.version, cmd.variantId))
+        addLog("Template applied: ${cmd.deviceTemplateId}@${cmd.version} variant=${cmd.variantId}")
+    }
+
+    private fun handleSetView(cmd: BleCommand.SetView) {
+        activeViewPerDevice[cmd.address] = cmd.view
+        _state.update { it.copy(activeView = cmd.view) }
+        addLog("View set to ${cmd.view} for ${cmd.address}")
+    }
+
+    fun selectView(address: String, view: String) {
+        activeViewPerDevice[address] = view
+        _state.update { it.copy(activeView = view) }
+        tcpClient.send(buildViewChanged(address, view))
+    }
+
+    private fun parseTemplateRef(ref: String): Pair<String, String?> {
+        // Format: "builtin.foo@^1.0.0" or "builtin.foo@1.0.0" or "builtin.foo"
+        val at = ref.indexOf('@')
+        return if (at >= 0) {
+            val id = ref.substring(0, at)
+            val verSpec = ref.substring(at + 1).trimStart('^', '~', '>', '=', '<', ' ')
+            id to verSpec.takeIf { it.isNotEmpty() }
+        } else ref to null
+    }
+
+    private fun extractViews(displayTemplate: org.json.JSONObject): List<String> {
+        val notifs = displayTemplate.optJSONArray("notifications") ?: return listOf("raw")
+        if (notifs.length() == 0) return listOf("raw")
+        val views = notifs.getJSONObject(0).optJSONObject("views") ?: return listOf("raw")
+        return views.keys().asSequence().toList()
+    }
+
+    // ------------------------------------------------------------------
+    // Notification rendering (template-aware)
+    // ------------------------------------------------------------------
+
+    private fun tryParseNotification(msg: String) {
         try {
             val obj = BridgeJson.decodeFromString<JsonObject>(msg)
             if (obj["event"]?.jsonPrimitive?.content != "notification") return
             val char = obj["char"]?.jsonPrimitive?.content ?: return
-            if (!char.startsWith("961f0005")) return
             val hex = obj["value"]?.jsonPrimitive?.content ?: return
-            val reading = parseWeatherFlowFrame(hex.hexToBytes()) ?: return
-            _state.update { it.copy(weatherFlow = reading) }
+            val bytes = hex.hexToBytes()
+            val address = obj["address"]?.jsonPrimitive?.content ?: ""
+            val view = activeViewPerDevice[address] ?: _state.value.activeView
+            val frame = if (_state.value.gattAnalyserMode || activeRenderer == null) {
+                com.coldboreballisticsllc.btbridge.template.GattAnalyser.render(char, bytes)
+            } else {
+                activeRenderer!!.render(char, bytes, view)
+                    ?: com.coldboreballisticsllc.btbridge.template.GattAnalyser.render(char, bytes)
+            }
+            _state.update { it.copy(renderedFrame = frame) }
         } catch (_: Exception) {}
     }
 
@@ -270,13 +388,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         try {
             val obj = BridgeJson.decodeFromString<JsonObject>(msg)
             if (obj["event"]?.jsonPrimitive?.content != "disconnected") return
-            _state.update { it.copy(bleDevice = null, weatherFlow = null) }
+            _state.update { it.copy(bleDevice = null, renderedFrame = null, gattAnalyserMode = false) }
         } catch (_: Exception) {}
     }
 
     // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
+
+    private fun forwardToServer(msg: String) {
+        // Enrich services_discovered with the advertised device name so the broker can
+        // match device templates whose signature requires a name_prefix.
+        val enriched = try {
+            val obj = BridgeJson.decodeFromString<JsonObject>(msg)
+            if (obj["event"]?.jsonPrimitive?.content == "services_discovered"
+                && obj["name"] == null) {
+                val address = obj["address"]?.jsonPrimitive?.content
+                val name = _state.value.scanResults.firstOrNull { it.address == address }?.name
+                if (name != null) {
+                    // Inject "name":"<name>" into the JSON object.
+                    msg.replaceFirst("{", """{"name":${JsonPrimitive(name)},""")
+                } else msg
+            } else msg
+        } catch (_: Exception) { msg }
+        tcpClient.send(enriched)
+    }
 
     private fun addLog(msg: String) {
         val ts = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
