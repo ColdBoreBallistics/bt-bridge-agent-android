@@ -40,14 +40,22 @@ app/src/test/            JVM unit tests (JUnit + org.json)
 
 ## 2. Development setup
 
-Requires the Android SDK and JDK 11+. Build with the Gradle wrapper (`./gradlew`) — do not install
-a separate Gradle.
+Requires the Android SDK and a **JDK in the 17–21 range** (the version supported by the Android
+Gradle Plugin in use). Build with the Gradle wrapper (`./gradlew`) — do not install a separate
+Gradle.
 
 ```bash
 git clone git@github.com:ColdBoreBallistics/bt-bridge-agent-android.git
 cd bt-bridge-agent-android
 ./gradlew :app:assembleDebug
 ```
+
+> **JDK note:** the build uses whatever `JAVA_HOME` points at (CI uses Temurin 17). If your system
+> default is a JDK newer than 21 (e.g. 25), the build will fail with a Java-version error — point
+> `JAVA_HOME` at a supported JDK for the build, e.g. Android Studio's bundled JBR:
+> `JAVA_HOME=/path/to/android-studio/jbr ./gradlew :app:assembleDebug`. Do **not** hardcode a JDK
+> path in the committed `gradle.properties` (it breaks CI and other machines); set it via
+> `JAVA_HOME`, your user-level `~/.gradle/gradle.properties`, or Android Studio's Gradle JDK setting.
 
 Open the project in Android Studio for the full IDE experience, or build from the command line.
 
