@@ -29,6 +29,11 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          # Keep wrapper-JAR validation ON, but allow the verified Gradle 8.13
+          # wrapper sha used by this repo (and the ScopeDOPE app repos). The
+          # gradle/actions allowlist doesn't yet include this 8.13 wrapper.
+          allow-checksums: 591253e94d06160a931907cfb5e90338b166b6232062998020b0bec0fa8e69fb
 
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug
