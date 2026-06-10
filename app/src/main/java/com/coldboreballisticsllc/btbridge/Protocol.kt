@@ -212,31 +212,7 @@ fun buildHello(platform: String, capabilities: List<String>, bleEnabled: Boolean
     return """{"event":"hello","platform":"$platform","capabilities":[$caps],"ble_enabled":$bleEnabled,"ts":${nowMs()}}"""
 }
 
-// ── WeatherFlow Tactical live-data parser ─────────────────────────────────────
-// Notify char 961f0005 — 16-byte LE frame, ~1 Hz
-// off0  u16  wind speed raw  (/ 1024 = mph)
-// off8  s16  temperature     (× 0.1 °C)
-// off10 u8   humidity        (%)
-// off12 u16  pressure        (× 0.1 hPa)
-
+// WeatherFlow Tactical notify characteristic (961f0005). Used to auto-subscribe
+// on service discovery until a device template drives subscriptions; payload is
+// now parsed generically by the template runtime, not a hardcoded frame parser.
 const val WF_NOTIFY_CHAR = "961f0005-d2d6-43e3-a417-3bb8217e0e01"
-
-data class WeatherFlowReading(
-    val windSpeedMph: Float,
-    val tempC:        Float,
-    val humidityPct:  Int,
-    val pressureHpa:  Float,
-)
-
-fun parseWeatherFlowFrame(bytes: ByteArray): WeatherFlowReading? {
-    if (bytes.size < 14) return null
-    fun u16(off: Int) = ((bytes[off + 1].toInt() and 0xFF) shl 8) or (bytes[off].toInt() and 0xFF)
-    fun s16(off: Int) = u16(off).let { if (it >= 0x8000) it - 0x10000 else it }
-    fun u8(off: Int)  = bytes[off].toInt() and 0xFF
-    return WeatherFlowReading(
-        windSpeedMph = u16(0) / 1024f,
-        tempC        = s16(8) * 0.1f,
-        humidityPct  = u8(10),
-        pressureHpa  = u16(12) * 0.1f,
-    )
-}
