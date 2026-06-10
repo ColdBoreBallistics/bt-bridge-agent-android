@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/) (see [`docs/VERSIONING.md`
 
 ## [Unreleased]
 
+### Removed
+- Dead WeatherFlow frame parser (`WeatherFlowReading`, `parseWeatherFlowFrame`) from
+  `Protocol.kt` — superseded by the generic template runtime. The `WF_NOTIFY_CHAR`
+  auto-subscribe is retained until a device template drives subscriptions.
+
 ## [0.9.0] — 2026-06-10
 
 First versioned release. Adds the template runtime: the agent now renders BLE data using display
