@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/) (see [`docs/VERSIONING.md`
 
 ## [Unreleased]
 
+### Changed
+- Modernized the Android toolchain: AGP 9.1.1, Gradle 9.3.1, Kotlin 2.2.10 (AGP built-in),
+  compileSdk/targetSdk 37, core-ktx 1.19.0, kotlinx-serialization 1.11.0, Java 17. Removed the
+  standalone Kotlin Gradle plugin (AGP 9 provides it).
+
 ### Removed
 - Dead WeatherFlow frame parser (`WeatherFlowReading`, `parseWeatherFlowFrame`) from
   `Protocol.kt` — superseded by the generic template runtime. The `WF_NOTIFY_CHAR`
