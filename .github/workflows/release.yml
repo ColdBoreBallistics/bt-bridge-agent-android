@@ -31,12 +31,12 @@ jobs:
       # Gradle 8.13 wrapper sha (byte-identical across the ScopeDOPE app repos;
       # the action's built-in allowlist doesn't yet include this 8.13 wrapper).
       - name: Validate Gradle wrapper
-        uses: gradle/actions/wrapper-validation@v4
+        uses: gradle/actions/wrapper-validation@v6
         with:
           allow-checksums: 591253e94d06160a931907cfb5e90338b166b6232062998020b0bec0fa8e69fb
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with:
           # Wrapper validation is handled by the explicit step above (which
           # allow-lists our verified checksum); don't re-run it here.
