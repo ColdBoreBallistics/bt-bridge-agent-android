@@ -210,4 +210,11 @@ class TemplateRendererTest {
         val frame = renderer.render("0000ff01-0000-1000-8000-00805f9b34fb", byteArrayOf(0x01), view = "raw")
         assertNull(frame)  // empty char must not match
     }
+
+    @Test
+    fun gatt_analyser_renders_hex_dump() {
+        val frame = GattAnalyser.render("0000ff01", byteArrayOf(0x55, 0xAA.toByte()))
+        val hexDump = frame.fields.first { it.id == "hex_dump" }
+        assertEquals("55 aa", hexDump.value.lowercase())
+    }
 }
