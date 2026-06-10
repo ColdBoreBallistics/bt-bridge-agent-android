@@ -58,7 +58,7 @@ class BleManager(
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
-        bleScanner.startScan(null, settings, scanCallback)
+        bleScanner?.startScan(null, settings, scanCallback)
         emit(buildLog("info", "Scan started (filter=${filter ?: "none"}, timeout=${timeoutMs}ms)"))
         if (timeoutMs > 0) {
             scanTimeout?.cancel()
@@ -72,7 +72,7 @@ class BleManager(
     fun stopScan() {
         scanTimeout?.cancel()
         scanTimeout = null
-        try { bleScanner.stopScan(scanCallback) } catch (_: Exception) {}
+        try { bleScanner?.stopScan(scanCallback) } catch (_: Exception) {}
         emit(buildLog("info", "Scan stopped"))
     }
 
