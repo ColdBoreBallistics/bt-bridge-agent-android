@@ -7,7 +7,7 @@ lifecycleRuntime     = "2.9.0"
 activityCompose      = "1.10.1"
 coroutines           = "1.10.2"
 kotlinxSerialization = "1.8.1"
-datastore            = "1.1.4"
+datastore            = "1.2.1"
 junit                = "4.13.2"
 orgJson              = "20260522"
 
